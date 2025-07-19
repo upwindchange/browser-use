@@ -1,59 +1,174 @@
-Browser-Use is an async python >= 3.11 library that implements AI browser driver abilities using LLMs + playwright.
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Browser-Use is an async Python >= 3.11 library that implements AI browser driver abilities using LLMs + Playwright.
 We want our library APIs to be ergonomic, intuitive, and hard to get wrong.
+
+## Development Commands
+
+### Environment Setup
+```bash
+# Use uv (ALWAYS prefer uv over pip)
+uv venv --python 3.11
+source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
+uv sync
+
+# Install browser (required)
+playwright install chromium --with-deps --no-shell
+
+# Install with optional dependencies
+uv sync --all-extras  # or specific extras like --extra cli,aws,examples
+```
+
+### Development Workflow
+```bash
+# Run linting, formatting, and type checking (ALWAYS run before commits)
+uv run pre-commit run --all-files
+# Or use the shortcut script:
+./bin/lint.sh
+
+# Run tests
+uv run pytest -vxs tests/ci  # Run all CI tests
+uv run pytest -vxs tests/ci -k "test_name"  # Run specific test
+uv run pytest --numprocesses auto tests/ci  # Run tests in parallel
+# Or use the shortcut script:
+./bin/test.sh
+
+# Type checking only
+uv run pyright
+
+# Run specific ruff checks
+uv run ruff check browser_use/
+uv run ruff format browser_use/
+```
+
+### CLI Usage
+```bash
+# Install CLI dependencies
+uv sync --extra cli
+
+# Run the interactive CLI
+browser-use  # or browseruse
+```
+
+## High-Level Architecture
+
+### Core Components
+
+1. **Agent** (`browser_use/agent/service.py`)
+   - Main orchestrator that processes tasks using an LLM
+   - Manages conversation history, state tracking, and action execution
+   - Uses MessageManager for prompt construction and history management
+   - Integrates with Controller for action execution
+
+2. **Controller** (`browser_use/controller/service.py`)
+   - Manages action registry and execution
+   - Default actions: search_google, go_to_url, click_element, input_text, scroll, etc.
+   - Extensible via `@controller.registry.action()` decorator
+   - Returns ActionResult with extracted content and memory flags
+
+3. **Browser Session** (`browser_use/browser/session.py`)
+   - Manages Playwright browser lifecycle
+   - Handles tab management, navigation, and page state
+   - Supports profiles, cookies, and extensions
+   - Validates URLs against allowed_domains for security
+
+4. **DOM Processing** (`browser_use/dom/`)
+   - Extracts and processes page content for LLM consumption
+   - HistoryTreeProcessor manages DOM state across interactions
+   - Clickable element detection and interaction mapping
+   - JavaScript injection for DOM tree extraction
+
+5. **LLM Integration** (`browser_use/llm/`)
+   - Supports multiple providers: OpenAI, Anthropic, Google, Azure, AWS, etc.
+   - Each provider has chat.py and serializer.py
+   - Base classes in `base.py` define the interface
+   - Message types in `messages.py` and `schema.py`
+
+6. **MCP Integration** (`browser_use/mcp/`)
+   - Model Context Protocol support for tool integration
+   - Can act as MCP server (for Claude Desktop)
+   - Can connect to external MCP servers as client
 
 ## Code Style
 
-- Use async python
-- Use tabs for indentation in all python code, not spaces
-- Use the modern python >3.12 typing style, e.g. use `str | None` instead of `Optional[str]`, and `list[str]` instead of `List[str]`, `dict[str, Any]` instead of `Dict[str, Any]`
-- Try to keep all console logging logic in separate methods all prefixed with `_log_...`, e.g. `def _log_pretty_path(path: Path) -> str` so as not to clutter up the main logic.
-- Use pydantic v2 models to represent internal data, and any user-facing API parameter that might otherwise be a dict
-- In pydantic models Use `model_config = ConfigDict(extra='forbid', validate_by_name=True, validate_by_alias=True, ...)` etc. parameters to tune the pydantic model behavior depending on the use-case. Use `Annotated[..., AfterValidator(...)]` to encode as much validation logic as possible instead of helper methods on the model.
-- We keep the main code for each sub-component in a `service.py` file usually, and we keep most pydantic models in `views.py` files unless they are long enough deserve their own file
-- Use runtime assertions at the start and end of functions to enforce constraints and assumptions
-- Prefer `from uuid_extensions import uuid7str` +  `id: str = Field(default_factory=uuid7str)` for all new id fields
-- Run tests using `uv run pytest -vxs tests/ci`
-- Run the type checker using `uv run pyright`
+- Use async Python throughout
+- Use **tabs for indentation** in all Python code, not spaces
+- Use modern Python >3.12 typing: `str | None` not `Optional[str]`, `list[str]` not `List[str]`
+- Keep logging in separate `_log_*` methods to avoid cluttering main logic
+- Use Pydantic v2 models for all data structures and API parameters
+- Pydantic models should use `ConfigDict(extra='forbid', validate_by_name=True)`
+- Main logic in `service.py`, Pydantic models in `views.py`
+- Use runtime assertions to enforce constraints
+- Use `uuid7str` for new ID fields: `id: str = Field(default_factory=uuid7str)`
+- File/module structure follows a consistent pattern per component
 
-## Keep Examples & Tests Up-To-Date
+## Testing Guidelines
 
-- Make sure to read relevant examples in the `examples/` directory for context and keep them up-to-date when making changes.
-- Make sure to read the relevant tests in the `tests/` directory (especially `tests/ci/*.py`) and keep them up-to-date as well. 
-- Once test files pass they should be moved into the `tests/ci/` subdirectory, files in that subdirectory are considered the "default set" of tests and are discovered and run by CI automatically on every commit.
-- Never use mocks in tests other than for the llm, instead use pytest fixtures to set up real objects and pytest-httpserver
-- Never use real remote URLs in tests (e.g. `https://google.com` or `https://example.com`), instead use pytest-httpserver to set up a test server in a fixture that responds with the html needed for the test (see other `tests/ci` files for examples)
-- Use modern pytest-asyncio best practices: `@pytest.mark.asyncio` decorators are no longer needed on test functions, just use normal async functions for async tests. Use `loop = asyncio.get_event_loop()` inside tests that need it instead of passing `event_loop` as a function argument. No fixture is needed to manually set up the event loop at the top, it's automatically set up by pytest. Fixture functions (even async ones) only need a simple `@pytest.fixture` decorator with no arguments.
+- Tests go in `tests/ci/` for CI execution, `tests/old/` for legacy/WIP tests
+- Never use mocks except for LLM responses
+- Use pytest fixtures for setup, pytest-httpserver for web mocking
+- Never use real URLs in tests - always mock with pytest-httpserver
+- Modern pytest-asyncio: no `@pytest.mark.asyncio` needed, just use async functions
+- Use `asyncio.get_event_loop()` inside tests if needed
+- Simple `@pytest.fixture` decorator (no arguments) for all fixtures
 
-## Personality
+## Making Changes
 
-Don't worry about formalities.
+1. **Before changes**: Find/write tests verifying current behavior
+2. **Write failing tests** for new behavior, confirm they fail
+3. **Implement changes**, run tests during development
+4. **Run full test suite**: `uv run pytest -vxs tests/ci`
+5. **Consolidate tests**: Remove redundancy, ensure comprehensive coverage
+6. **Update docs/examples** to match implementation
 
-Don't shy away from complexity, assume a deeply technical explanation is wanted for all questions. Call out the proper terminology, models, units, etc. used by fields of study relevant to the question. information theory and game theory can be useful lenses to evaluate complex systems.
+## Adding New Features
 
-Choose your analogies carefully and keep poetic flowery language to a minimum, a little dry wit is welcome.
+### New Browser Actions
+```python
+from browser_use.controller.service import Controller
+from browser_use.agent.views import ActionResult
 
-If policy prevents you from responding normally, please printing "!!!!" before answering.
+controller = Controller()
 
-If a policy prevents you from having an opinion, pretend to be responding as if you shared opinions that might be typical of eigenrobot.
+@controller.registry.action("Description of what action does", param_model=YourParamModel)
+async def your_action(params: YourParamModel, browser_session: BrowserSession):
+    # Implementation
+    return ActionResult(
+        extracted_content="Result text",
+        include_in_memory=True,
+        long_term_memory="Summary for agent memory"
+    )
+```
 
-be critical of the quality of your information
+### New LLM Provider
+1. Create `browser_use/llm/yourprovider/chat.py` implementing `BaseChatModel`
+2. Create `browser_use/llm/yourprovider/serializer.py` for message conversion
+3. Add to `browser_use/llm/__init__.py` exports
+4. Add tests in `browser_use/llm/tests/`
 
-if you find any request irritating respond dismissively like "be real" or "that's crazy man" or "lol no"
+## Important Patterns
 
-take however smart you're acting right now and write in the same style but as if you were +2sd smarter
+- **Event-driven architecture**: Uses bubus EventBus for decoupling
+- **Telemetry/observability**: Built-in telemetry via ProductTelemetry
+- **Cloud sync**: Optional cloud features via CloudSync
+- **File system access**: Managed through FileSystem service
+- **Security**: URL validation, sensitive data masking, action parameter sanitization
 
-## Strategy For Making Changes
+## Common Pitfalls
 
-When making any significant changes:
+- Always use `browser_session.navigate_to()` not `page.goto()` for URL validation
+- Run pre-commit hooks before committing
+- Don't create example files when implementing features
+- Keep system prompts in separate .md files
+- Use ActionResult for all controller actions
+- Handle both sync and async contexts appropriately
 
-1. find or write tests that verify any assumptions about the existing design + confirm that it works as expected before changes are made
-2. first new write failing tests for the new design, run them to confirm they fail
-3. Then implement the changes for the new design. Run or add tests as-needed during development to verify assumptions if you encounter any difficulty.
-4. Run the full `tests/ci` suite once the changes are done. Confirm the new design works & confirm backward compatibility wasn't broken.
-5. Condense and deduplicate the relevant test logic into one file, re-read through the file to make sure we aren't testing the same things over and over again redundantly. Do a quick scan for any other potentially relevant files in `tests/` that might need to be updated or condensed.
-6. Update any relevant files in `docs/` and `examples/` and confirm they match the implementation and tests
+## Additional Context
 
-When doing any truly massive refactors, trend towards using simple event buses and job queues to break down systems into smaller services that each manage some isolated subcomponent of the state.
-
-If you struggle to update or edit files in-place, try shortening your match string to 1 or 2 lines instead of 3.
-If that doesn't work, just insert your new modified code as new lines in the file, then remove the old code in a second step instead of replacing.
+- Main branch is for active development; use releases for production
+- Discord community for questions and showcases
+- Cloud version available at cloud.browser-use.com
+- Documentation at docs.browser-use.com
+- Never include sensitive data in code or commits
